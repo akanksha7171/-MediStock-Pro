@@ -1,0 +1,500 @@
+﻿MEDISTOCK PRO SOURCE REVIEW
+
+
+========== FILE: README.md ==========
+
+# MediStock Pro
+
+Pharmacy stock, expiry and billing system. React (Vite + Tailwind) frontend, Express backend, MySQL database.
+
+## Run on Windows (first time)
+1. Install **Node.js LTS** (nodejs.org) and **MySQL** (or XAMPP). Remember your MySQL root password.
+2. Open Command Prompt in the project folder and create the database:
+   `mysql -u root -p < database\schema.sql`
+3. Backend:
+   `cd server` -> `copy .env.example .env` -> open `.env` in Notepad and fill in your MySQL password, a long random JWT_SECRET, ADMIN_EMAIL and ADMIN_PASSWORD (keep the password in double quotes) -> `npm install` -> `npm run seed` -> `npm start`
+4. Frontend (second Command Prompt): `cd client` -> `npm install` -> `npm run dev`
+5. Open http://localhost:5173 and sign in with the ADMIN_EMAIL / ADMIN_PASSWORD from your `.env`.
+
+## What works (tested against a real database through the API)
+- Login (JWT, bcrypt), owner/staff roles, staff accounts (create, disable), change password API
+- Medicines: add, search (name/generic/barcode), archive. Edit exists in the API only.
+- Batches with expiry status; stock adjustment API with reason and audit log
+- Purchases (transactional, creates batches + stock movements; duplicate batch numbers rejected)
+- Billing/POS: server re-checks expiry and stock, row locking, duplicate-submit protection, rollback on failure, tax calculated on the server
+- Sales history with search/filters, full-sale return (stock restored, audit + movement records)
+- Dashboard (live stats, 7-day chart), notifications (read/unread), analytics API, CSV export (sales, inventory, purchases; owner only)
+
+## Not finished
+- Pages not built yet: Analytics page, Settings page, Profile page (their APIs exist)
+- No medicine edit form, no stock-adjustment form, no discount field in POS
+- No PDF invoice (browser Print only), no partial returns, no demand forecast, no assistant, no barcode camera
+- The UI was only compile-checked: it has NOT been viewed in a browser, so layout, mobile and visual polish are unverified
+- shadcn/ui is not used (Tailwind + Framer Motion + Recharts + Lucide only)
+
+## API (all except login/health need `Authorization: Bearer <token>`; (owner) = admin only)
+auth/login, auth/change-password, me, users (owner), medicines, batches, stock/adjust (owner), suppliers, purchases (owner create), sales, sales/:id, sales/:id/return (owner), sales-search, dashboard, dashboard/trend, analytics, notifications, notifications/read-all, notifications/:id/read, settings (owner edit), export/:sales|inventory|purchases (owner)
+
+
+
+========== FILE: client\index.html ==========
+
+<!doctype html><html><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><title>MediStock Pro</title><link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet"/></head><body><div id="root"></div><script type="module" src="/src/main.jsx"></script></body></html>
+
+
+
+========== FILE: client\package.json ==========
+
+{"name":"medistock-client","private":true,"type":"module","scripts":{"dev":"vite","build":"vite build"},"dependencies":{"axios":"^1.7.7","framer-motion":"^11.11.0","lucide-react":"^0.453.0","react":"^18.3.1","react-dom":"^18.3.1","react-hot-toast":"^2.4.1","react-router-dom":"^6.27.0","recharts":"^2.13.0"},"devDependencies":{"@tailwindcss/vite":"^4.0.0","@vitejs/plugin-react":"^4.3.3","tailwindcss":"^4.0.0","vite":"^5.4.10"}}
+
+
+
+========== FILE: client\vite.config.js ==========
+
+import {defineConfig} from 'vite';import react from '@vitejs/plugin-react';import tw from '@tailwindcss/vite';
+export default defineConfig({plugins:[react(),tw()],server:{port:5173,proxy:{'/api':'http://localhost:5000'}}});
+
+
+
+========== FILE: client\src\api.js ==========
+
+import axios from 'axios';
+const api=axios.create({baseURL:'/api'});
+api.interceptors.request.use(c=>{const t=localStorage.getItem('token');if(t)c.headers.Authorization='Bearer '+t;return c;});
+api.interceptors.response.use(r=>r,e=>{if(e.response?.status===401&&!e.config.url.includes('login')){localStorage.clear();location.href='/login';}return Promise.reject(e);});
+export const msg=e=>e.response?.data?.error||'Could not reach the server. Please try again.';
+export default api;
+export const download=async(what)=>{const r=await api.get('/export/'+what,{responseType:'blob'});const a=document.createElement('a');a.href=URL.createObjectURL(r.data);a.download=what+'.csv';a.click();};
+
+
+
+========== FILE: client\src\App.jsx ==========
+
+import {useState,useEffect} from 'react';import {Routes,Route,Navigate,NavLink,useNavigate} from 'react-router-dom';
+import {LayoutDashboard,Pill,Boxes,ReceiptText,LogOut,Menu,Cross,Bell,Truck,PackagePlus,History,Users} from 'lucide-react';
+import toast from 'react-hot-toast';import api,{msg} from './api';import {Btn,Input} from './ui';
+import Suppliers from './pages/Suppliers';import Purchases from './pages/Purchases';import Sales from './pages/Sales';import Notifications from './pages/Notifications';import Staff from './pages/Staff';import Dashboard from './pages/Dashboard';import POS from './pages/POS';import Medicines from './pages/Medicines';import Inventory from './pages/Inventory';
+const user=()=>{try{return JSON.parse(localStorage.getItem('user'));}catch{return null;}};
+function Login(){const nav=useNavigate();const [f,setF]=useState({email:'',password:''});const [busy,setBusy]=useState(false);
+ const go=async e=>{e.preventDefault();setBusy(true);try{const {data}=await api.post('/auth/login',f);localStorage.setItem('token',data.token);localStorage.setItem('user',JSON.stringify(data.user));nav('/');}catch(x){toast.error(msg(x));}setBusy(false);};
+ return <div className="min-h-screen grid lg:grid-cols-2"><div className="hidden lg:flex flex-col justify-between bg-navy text-white p-12"><div className="flex items-center gap-2 text-xl font-semibold"><Cross className="text-emerald-400"/>MediStock Pro</div><div><h2 className="text-4xl font-semibold leading-tight">Run your pharmacy<br/>with confidence.</h2><p className="mt-4 text-slate-300 max-w-md">Batch-wise stock, expiry safety and fast billing in one simple place.</p></div><p className="text-sm text-slate-400">Smart Pharmacy Management System</p></div>
+ <div className="grid place-items-center p-6"><form onSubmit={go} className="w-full max-w-sm space-y-4"><h1 className="text-2xl font-semibold">Welcome back</h1><p className="text-sm text-slate-500">Sign in to continue.</p><Input type="email" placeholder="Email" required value={f.email} onChange={e=>setF({...f,email:e.target.value})}/><Input type="password" placeholder="Password" required value={f.password} onChange={e=>setF({...f,password:e.target.value})}/><Btn disabled={busy} className="w-full">{busy?'Signing inâ€¦':'Sign in'}</Btn></form></div></div>;}
+const nav=[['/','Dashboard',LayoutDashboard],['/pos','Billing / POS',ReceiptText],['/medicines','Medicines',Pill],['/inventory','Inventory & Expiry',Boxes],['/sales','Sales',History],['/purchases','Purchases',PackagePlus],['/suppliers','Suppliers',Truck],['/notifications','Notifications',Bell],['/staff','Staff',Users]];
+function Shell({children}){const u=user();const [open,setOpen]=useState(false);const [n,setN]=useState(0);const nv=useNavigate();
+ useEffect(()=>{api.get('/notifications').then(r=>setN(r.data.filter(x=>!x.is_read).length)).catch(()=>{});},[]);
+ const out=()=>{localStorage.clear();nv('/login');};
+ return <div className="min-h-screen lg:flex"><aside className={`fixed lg:static z-30 inset-y-0 left-0 w-64 bg-navy text-slate-300 p-4 flex flex-col transition-transform ${open?'':'-translate-x-full lg:translate-x-0'}`}>
+ <div className="flex items-center gap-2 text-white text-lg font-semibold px-2 py-3"><Cross className="text-emerald-400"/>MediStock Pro</div>
+ <nav className="mt-4 space-y-1 flex-1">{nav.map(([to,l,I])=><NavLink key={to} to={to} end={to==='/'} onClick={()=>setOpen(false)} className={({isActive})=>`flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm transition ${isActive?'bg-brand text-white':'hover:bg-white/10'}`}><I size={18}/>{l}</NavLink>)}</nav>
+ <button onClick={out} className="flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm hover:bg-white/10"><LogOut size={18}/>Log out</button></aside>
+ <div className="flex-1 min-w-0"><header className="h-16 bg-white/80 backdrop-blur border-b border-slate-200 flex items-center justify-between px-4 lg:px-8 sticky top-0 z-20"><button className="lg:hidden" onClick={()=>setOpen(!open)}><Menu/></button><span className="hidden lg:block text-sm text-slate-500">{new Date().toDateString()}</span>
+ <div className="flex items-center gap-4"><div className="relative"><Bell size={20} className="text-slate-500"/>{n>0&&<span className="absolute -top-1.5 -right-1.5 bg-red-500 text-white text-[10px] rounded-full h-4 min-w-4 px-1 grid place-items-center">{n}</span>}</div><div className="flex items-center gap-2"><div className="h-9 w-9 rounded-full bg-brand text-white grid place-items-center text-sm font-semibold">{u?.name?.[0]}</div><div className="text-sm leading-tight hidden sm:block"><p className="font-medium">{u?.name}</p><p className="text-xs text-slate-500 capitalize">{u?.role}</p></div></div></div></header>
+ <main className="p-4 lg:p-8 max-w-7xl">{children}</main></div></div>;}
+const Guard=({children})=>localStorage.getItem('token')?<Shell>{children}</Shell>:<Navigate to="/login"/>;
+export default function App(){return <Routes><Route path="/login" element={<Login/>}/><Route path="/" element={<Guard><Dashboard/></Guard>}/><Route path="/pos" element={<Guard><POS/></Guard>}/><Route path="/medicines" element={<Guard><Medicines/></Guard>}/><Route path="/inventory" element={<Guard><Inventory/></Guard>}/><Route path="/sales" element={<Guard><Sales/></Guard>}/><Route path="/purchases" element={<Guard><Purchases/></Guard>}/><Route path="/suppliers" element={<Guard><Suppliers/></Guard>}/><Route path="/notifications" element={<Guard><Notifications/></Guard>}/><Route path="/staff" element={<Guard><Staff/></Guard>}/><Route path="*" element={<Navigate to="/"/>}/></Routes>;}
+
+
+
+========== FILE: client\src\index.css ==========
+
+@import "tailwindcss";
+@theme{--color-brand:#16865A;--color-navy:#172B3A;--color-bg:#F7F9F8;--font-sans:Inter,system-ui,sans-serif;}
+body{background:#F7F9F8;color:#172B3A}
+@media print{aside,header,.noprint{display:none!important}}
+
+
+
+========== FILE: client\src\main.jsx ==========
+
+import React from 'react';import {createRoot} from 'react-dom/client';import {BrowserRouter} from 'react-router-dom';import {Toaster} from 'react-hot-toast';import App from './App.jsx';import './index.css';
+createRoot(document.getElementById('root')).render(<BrowserRouter><App/><Toaster position="top-right"/></BrowserRouter>);
+
+
+
+========== FILE: client\src\ui.jsx ==========
+
+import {motion} from 'framer-motion';
+export const Card=({children,className=''})=><motion.div initial={{opacity:0,y:8}} animate={{opacity:1,y:0}} transition={{duration:.25}} className={`bg-white rounded-2xl border border-slate-200/80 shadow-sm ${className}`}>{children}</motion.div>;
+export const Stat=({icon:I,label,value,tone='brand'})=>{const t={brand:'bg-emerald-50 text-brand',amber:'bg-amber-50 text-amber-600',red:'bg-red-50 text-red-600',navy:'bg-slate-100 text-navy'}[tone];
+ return <Card className="p-5 flex items-center gap-4"><div className={`h-12 w-12 rounded-xl grid place-items-center ${t}`}><I size={22}/></div><div><p className="text-sm text-slate-500">{label}</p><p className="text-2xl font-semibold tracking-tight">{value}</p></div></Card>;};
+export const Badge=({status})=>{const m={expired:'bg-red-50 text-red-700',critical:'bg-orange-50 text-orange-700',warning:'bg-amber-50 text-amber-700',safe:'bg-emerald-50 text-emerald-700'};return <span className={`px-2.5 py-1 rounded-full text-xs font-medium capitalize ${m[status]}`}>{status}</span>;};
+export const Btn=({children,variant='primary',className='',...p})=><button {...p} className={`inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-medium transition disabled:opacity-50 ${variant==='primary'?'bg-brand text-white hover:bg-emerald-700 shadow-sm':'bg-white border border-slate-200 hover:bg-slate-50'} ${className}`}>{children}</button>;
+export const Input=p=><input {...p} className={`w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm outline-none focus:border-brand focus:ring-4 focus:ring-emerald-100 ${p.className||''}`}/>;
+export const Page=({title,sub,children,action})=><div className="space-y-6"><div className="flex items-end justify-between gap-4 flex-wrap"><div><h1 className="text-2xl font-semibold tracking-tight">{title}</h1><p className="text-slate-500 text-sm mt-1">{sub}</p></div>{action}</div>{children}</div>;
+export const Empty=({text})=><div className="py-14 text-center text-slate-400 text-sm">{text}</div>;
+export const Spinner=()=><div className="py-14 grid place-items-center"><div className="h-8 w-8 rounded-full border-4 border-emerald-100 border-t-brand animate-spin"/></div>;
+export const inr=n=>'â‚¹'+Number(n||0).toLocaleString('en-IN',{maximumFractionDigits:2});
+export const Modal=({title,onClose,children})=><div className="fixed inset-0 bg-navy/40 backdrop-blur-sm z-40 grid place-items-center p-4"><motion.div initial={{scale:.96,opacity:0}} animate={{scale:1,opacity:1}} className="bg-white rounded-2xl p-6 w-full max-w-lg max-h-[90vh] overflow-auto shadow-xl"><div className="flex justify-between mb-4"><h3 className="text-lg font-semibold">{title}</h3><button onClick={onClose} className="text-slate-400 text-xl leading-none">Ã—</button></div>{children}</motion.div></div>;
+export const Table=({heads,children})=><table className="w-full text-sm"><thead className="text-left text-slate-500 bg-slate-50"><tr>{heads.map(h=><th key={h} className="px-5 py-3 font-medium">{h}</th>)}</tr></thead><tbody className="divide-y [&_td]:px-5 [&_td]:py-3.5">{children}</tbody></table>;
+
+
+
+========== FILE: client\src\pages\Dashboard.jsx ==========
+
+import {useEffect,useState} from 'react';import {Pill,Boxes,IndianRupee,TrendingUp,AlertTriangle,Clock,Wallet,CalendarX} from 'lucide-react';
+import {AreaChart,Area,XAxis,YAxis,Tooltip,ResponsiveContainer,CartesianGrid} from 'recharts';
+import api,{msg} from '../api';import {Card,Stat,Page,Spinner,Empty,inr} from '../ui';
+export default function Dashboard(){const [d,setD]=useState(null);const [t,setT]=useState([]);const [err,setErr]=useState('');
+ useEffect(()=>{Promise.all([api.get('/dashboard'),api.get('/dashboard/trend')]).then(([a,b])=>{setD(a.data);setT(b.data);}).catch(e=>setErr(msg(e)));},[]);
+ if(err)return <Empty text={err}/>;if(!d)return <Spinner/>;
+ return <Page title="Dashboard" sub="Your pharmacy at a glance â€” updated from live records.">
+ <div className="grid sm:grid-cols-2 xl:grid-cols-4 gap-4"><Stat icon={IndianRupee} label="Today's sales" value={inr(d.today_sales)}/><Stat icon={TrendingUp} label="This month" value={inr(d.month_sales)}/><Stat icon={Wallet} label="Gross profit (month)" value={inr(d.gross_profit_month)} tone="navy"/><Stat icon={Boxes} label="Stock value (at cost)" value={inr(d.inventory_value)} tone="navy"/>
+ <Stat icon={Pill} label="Medicines" value={d.medicines}/><Stat icon={AlertTriangle} label="Low stock" value={d.low_stock_count} tone="amber"/><Stat icon={Clock} label="Expiring in 30 days" value={d.expiring_soon} tone="amber"/><Stat icon={CalendarX} label="Expired batches" value={d.expired_batches} tone="red"/></div>
+ <div className="grid lg:grid-cols-3 gap-4"><Card className="lg:col-span-2 p-5"><h3 className="font-semibold mb-4">Sales â€” last 7 days</h3><div className="h-72"><ResponsiveContainer><AreaChart data={t}><defs><linearGradient id="g" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#16865A" stopOpacity=".3"/><stop offset="100%" stopColor="#16865A" stopOpacity="0"/></linearGradient></defs><CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0"/><XAxis dataKey="label" tickLine={false} axisLine={false} fontSize={12}/><YAxis tickLine={false} axisLine={false} fontSize={12}/><Tooltip formatter={v=>inr(v)}/><Area type="monotone" dataKey="total" stroke="#16865A" strokeWidth={2.5} fill="url(#g)"/></AreaChart></ResponsiveContainer></div></Card>
+ <Card className="p-5"><h3 className="font-semibold mb-4">Low-stock alerts</h3>{d.low_stock.length===0?<Empty text="All stock levels are healthy."/>:<ul className="divide-y">{d.low_stock.map(m=><li key={m.id} className="py-3 flex justify-between text-sm"><span className="font-medium">{m.name}</span><span className="text-amber-600">{m.stock} left <span className="text-slate-400">/ min {m.min_stock}</span></span></li>)}</ul>}</Card></div></Page>;}
+
+
+
+========== FILE: client\src\pages\Inventory.jsx ==========
+
+import {useEffect,useState} from 'react';import api,{msg} from '../api';import {Card,Page,Spinner,Empty,Badge,inr} from '../ui';
+export default function Inventory(){const [rows,setRows]=useState(null);const [flt,setFlt]=useState('all');const [err,setErr]=useState('');
+ useEffect(()=>{api.get('/batches').then(r=>setRows(r.data)).catch(e=>setErr(msg(e)));},[]);
+ if(err)return <Empty text={err}/>;if(!rows)return <Spinner/>;const v=rows.filter(b=>flt==='all'||b.expiry_status===flt);
+ return <Page title="Inventory & Expiry" sub="Every batch with its expiry status. Expired stock is kept for records but can never be sold.">
+ <div className="flex gap-2 flex-wrap">{['all','expired','critical','warning','safe'].map(s=><button key={s} onClick={()=>setFlt(s)} className={`px-4 py-2 rounded-full text-sm capitalize border ${flt===s?'bg-navy text-white border-navy':'bg-white border-slate-200'}`}>{s}</button>)}</div>
+ <Card className="overflow-x-auto">{v.length===0?<Empty text="No batches in this group."/>:<table className="w-full text-sm"><thead className="text-left text-slate-500 bg-slate-50"><tr>{['Medicine','Batch','Qty','Cost','Price','Expiry','Status'].map(h=><th key={h} className="px-5 py-3 font-medium">{h}</th>)}</tr></thead><tbody className="divide-y">{v.map(b=><tr key={b.id} className="hover:bg-slate-50/70"><td className="px-5 py-3.5 font-medium">{b.medicine}</td><td className="px-5">{b.batch_no}</td><td className="px-5">{b.available_qty}<span className="text-slate-400"> / {b.received_qty}</span></td><td className="px-5">{inr(b.purchase_price)}</td><td className="px-5">{inr(b.selling_price)}</td><td className="px-5">{b.expiry_date} <span className="text-slate-400 text-xs">({b.days_left<0?'expired':b.days_left+'d'})</span></td><td className="px-5"><Badge status={b.expiry_status}/></td></tr>)}</tbody></table>}</Card></Page>;}
+
+
+
+========== FILE: client\src\pages\Medicines.jsx ==========
+
+import {useEffect,useState,useCallback} from 'react';import {Plus,Search,Archive} from 'lucide-react';import toast from 'react-hot-toast';
+import api,{msg} from '../api';import {Card,Page,Btn,Input,Spinner,Empty} from '../ui';
+const blank={name:'',generic_name:'',brand:'',category:'',barcode:'',min_stock:10,tax_percent:12};
+export default function Medicines(){const admin=JSON.parse(localStorage.getItem('user'))?.role==='admin';
+ const [rows,setRows]=useState(null);const [q,setQ]=useState('');const [f,setF]=useState(null);
+ const load=useCallback(()=>api.get('/medicines',{params:{search:q}}).then(r=>setRows(r.data)).catch(e=>toast.error(msg(e))),[q]);
+ useEffect(()=>{const t=setTimeout(load,250);return()=>clearTimeout(t);},[load]);
+ const save=async e=>{e.preventDefault();try{await api.post('/medicines',f);toast.success('Medicine added');setF(null);load();}catch(x){toast.error(msg(x));}};
+ const arch=async m=>{if(!confirm(`Archive ${m.name}? Its history is kept.`))return;try{await api.delete('/medicines/'+m.id);toast.success('Archived');load();}catch(x){toast.error(msg(x));}};
+ const fld=(k,l,t='text')=><label className="block text-sm"><span className="text-slate-600">{l}</span><Input type={t} required={k==='name'} value={f[k]??''} onChange={e=>setF({...f,[k]:e.target.value})}/></label>;
+ return <Page title="Medicines" sub="Search by name, generic name or barcode." action={admin&&<Btn onClick={()=>setF(blank)}><Plus size={16}/>Add medicine</Btn>}>
+ <Card className="p-4"><div className="relative"><Search size={16} className="absolute left-3.5 top-3.5 text-slate-400"/><Input className="pl-10" placeholder="Search medicinesâ€¦" value={q} onChange={e=>setQ(e.target.value)}/></div></Card>
+ <Card className="overflow-x-auto">{!rows?<Spinner/>:rows.length===0?<Empty text="No medicines found."/>:<table className="w-full text-sm"><thead className="text-left text-slate-500 bg-slate-50"><tr>{['Medicine','Generic','Category','Barcode','In stock',''].map(h=><th key={h} className="px-5 py-3 font-medium">{h}</th>)}</tr></thead><tbody className="divide-y">{rows.map(m=><tr key={m.id} className="hover:bg-slate-50/70"><td className="px-5 py-3.5 font-medium">{m.name}</td><td className="px-5 text-slate-500">{m.generic_name}</td><td className="px-5">{m.category&&<span className="bg-slate-100 rounded-full px-2.5 py-1 text-xs">{m.category}</span>}</td><td className="px-5 text-slate-500">{m.barcode}</td><td className={`px-5 font-medium ${m.stock<=m.min_stock?'text-amber-600':''}`}>{m.stock}</td><td className="px-5 text-right">{admin&&<button onClick={()=>arch(m)} className="text-slate-400 hover:text-red-600"><Archive size={16}/></button>}</td></tr>)}</tbody></table>}</Card>
+ {f&&<div className="fixed inset-0 bg-navy/40 backdrop-blur-sm z-40 grid place-items-center p-4"><form onSubmit={save} className="bg-white rounded-2xl p-6 w-full max-w-lg space-y-3 shadow-xl"><h3 className="text-lg font-semibold">Add medicine</h3><div className="grid grid-cols-2 gap-3">{fld('name','Name')}{fld('generic_name','Generic name')}{fld('brand','Brand')}{fld('category','Category')}{fld('barcode','Barcode')}{fld('min_stock','Low-stock level','number')}{fld('tax_percent','Tax %','number')}</div><div className="flex justify-end gap-2 pt-2"><Btn type="button" variant="ghost" onClick={()=>setF(null)}>Cancel</Btn><Btn>Save</Btn></div></form></div>}</Page>;}
+
+
+
+========== FILE: client\src\pages\Notifications.jsx ==========
+
+import {useEffect,useState,useCallback} from 'react';import {CheckCheck,AlertTriangle,Clock,CalendarX} from 'lucide-react';import toast from 'react-hot-toast';
+import api,{msg} from '../api';import {Card,Page,Btn,Spinner,Empty} from '../ui';
+const ic={low_stock:[AlertTriangle,'text-amber-600 bg-amber-50'],expiring:[Clock,'text-orange-600 bg-orange-50'],expired:[CalendarX,'text-red-600 bg-red-50']};
+export default function Notifications(){const [rows,setRows]=useState(null);const load=useCallback(()=>api.get('/notifications').then(r=>setRows(r.data)).catch(e=>toast.error(msg(e))),[]);useEffect(()=>{load();},[load]);
+ const one=async n=>{await api.post(`/notifications/${n.id}/read`);load();};const all=async()=>{await api.post('/notifications/read-all');load();};
+ return <Page title="Notifications" sub="Stock and expiry alerts, generated from your live records." action={<Btn variant="ghost" onClick={all}><CheckCheck size={16}/>Mark all read</Btn>}>
+ <Card>{!rows?<Spinner/>:!rows.length?<Empty text="You're all caught up."/>:<ul className="divide-y">{rows.map(n=>{const [I,c]=ic[n.category]||ic.low_stock;return <li key={n.id} className={`p-4 flex items-center gap-4 ${n.is_read?'opacity-55':''}`}><div className={`h-10 w-10 rounded-xl grid place-items-center ${c}`}><I size={18}/></div><div className="flex-1 text-sm"><p className="font-medium">{n.message}</p><p className="text-xs text-slate-400">{n.created_at}</p></div>{!n.is_read&&<button onClick={()=>one(n)} className="text-xs text-brand font-medium">Mark read</button>}</li>;})}</ul>}</Card></Page>;}
+
+
+
+========== FILE: client\src\pages\POS.jsx ==========
+
+import {useEffect,useState} from 'react';import {Search,Plus,Minus,Trash2,Printer,CheckCircle2} from 'lucide-react';import toast from 'react-hot-toast';
+import api,{msg} from '../api';import {Card,Page,Btn,Input,inr,Empty} from '../ui';
+export default function POS(){const [batches,setB]=useState([]);const [q,setQ]=useState('');const [cart,setCart]=useState([]);const [pay,setPay]=useState('cash');const [cust,setCust]=useState('');const [busy,setBusy]=useState(false);const [inv,setInv]=useState(null);const [key,setKey]=useState(()=>crypto.randomUUID());
+ useEffect(()=>{api.get('/batches').then(r=>setB(r.data.filter(b=>b.expiry_status!=='expired'&&b.available_qty>0)));},[inv]);
+ const hits=q?batches.filter(b=>b.medicine.toLowerCase().includes(q.toLowerCase())):[];
+ const add=b=>{setQ('');setCart(c=>c.find(x=>x.id===b.id)?c:[...c,{...b,qty:1}]);};
+ const chg=(id,d)=>setCart(c=>c.map(x=>x.id===id?{...x,qty:Math.max(1,Math.min(x.available_qty,x.qty+d))}:x));
+ const total=cart.reduce((s,x)=>s+x.qty*x.selling_price,0);
+ const done=async()=>{if(!cart.length)return toast.error('Add at least one medicine.');setBusy(true);try{const {data}=await api.post('/sales',{payment_method:pay,customer_name:cust,idempotency_key:key,items:cart.map(x=>({batch_id:x.id,quantity:x.qty}))});const {data:full}=await api.get('/sales/'+data.id);setInv(full);setCart([]);setCust('');setKey(crypto.randomUUID());toast.success('Sale completed');}catch(e){toast.error(msg(e));}setBusy(false);};
+ return <Page title="Billing / POS" sub="Search a medicine, add it to the bill, choose payment and save.">
+ <div className="grid lg:grid-cols-5 gap-4"><div className="lg:col-span-3 space-y-3"><Card className="p-4 relative"><Search size={16} className="absolute left-7 top-7 text-slate-400"/><Input className="pl-10" autoFocus placeholder="Type a medicine nameâ€¦" value={q} onChange={e=>setQ(e.target.value)}/>
+ {hits.length>0&&<ul className="mt-3 divide-y border rounded-xl overflow-hidden">{hits.map(b=><li key={b.id}><button onClick={()=>add(b)} className="w-full text-left px-4 py-3 hover:bg-emerald-50 flex justify-between text-sm"><span><b>{b.medicine}</b> <span className="text-slate-400">Â· batch {b.batch_no} Â· exp {b.expiry_date}</span></span><span>{inr(b.selling_price)} Â· {b.available_qty} left</span></button></li>)}</ul>}</Card>
+ <Card className="p-2">{cart.length===0?<Empty text="The bill is empty. Search above to add medicines."/>:<ul className="divide-y">{cart.map(x=><li key={x.id} className="p-3 flex items-center gap-3 text-sm"><div className="flex-1"><p className="font-medium">{x.medicine}</p><p className="text-xs text-slate-400">Batch {x.batch_no} Â· {inr(x.selling_price)} each</p></div><div className="flex items-center gap-2"><button onClick={()=>chg(x.id,-1)} className="h-8 w-8 rounded-lg border grid place-items-center"><Minus size={14}/></button><span className="w-8 text-center font-medium">{x.qty}</span><button onClick={()=>chg(x.id,1)} className="h-8 w-8 rounded-lg border grid place-items-center"><Plus size={14}/></button></div><span className="w-20 text-right font-medium">{inr(x.qty*x.selling_price)}</span><button onClick={()=>setCart(cart.filter(c=>c.id!==x.id))} className="text-slate-400 hover:text-red-600"><Trash2 size={16}/></button></li>)}</ul>}</Card></div>
+ <Card className="lg:col-span-2 p-5 space-y-4 h-fit"><h3 className="font-semibold">Payment</h3><Input placeholder="Customer name (optional)" value={cust} onChange={e=>setCust(e.target.value)}/><div className="grid grid-cols-4 gap-2">{['cash','upi','card','other'].map(p=><button key={p} onClick={()=>setPay(p)} className={`py-2 rounded-xl text-sm uppercase border ${pay===p?'bg-brand text-white border-brand':'bg-white border-slate-200'}`}>{p}</button>)}</div>
+ <div className="rounded-xl bg-slate-50 p-4 text-sm space-y-1"><div className="flex justify-between"><span className="text-slate-500">Items total</span><span>{inr(total)}</span></div><p className="text-xs text-slate-400">Tax is added automatically when you save.</p></div>
+ <Btn onClick={done} disabled={busy} className="w-full py-3">{busy?'Savingâ€¦':'Complete sale'}</Btn></Card></div>
+ {inv&&<div className="fixed inset-0 bg-navy/40 backdrop-blur-sm z-40 grid place-items-center p-4"><div className="bg-white rounded-2xl p-6 w-full max-w-md shadow-xl"><div className="text-center"><CheckCircle2 className="mx-auto text-brand" size={36}/><h3 className="text-lg font-semibold mt-2">Invoice {inv.invoice_no}</h3><p className="text-xs text-slate-400">{inv.created_at} Â· {inv.payment_method.toUpperCase()}</p></div>
+ <table className="w-full text-sm mt-4"><tbody>{inv.items.map(i=><tr key={i.id} className="border-b"><td className="py-2">{i.name}<div className="text-xs text-slate-400">Batch {i.batch_no} Ã— {i.quantity}</div></td><td className="text-right">{inr(i.line_total)}</td></tr>)}</tbody></table>
+ <div className="text-sm mt-3 space-y-1"><div className="flex justify-between"><span>Subtotal</span><span>{inr(inv.subtotal)}</span></div><div className="flex justify-between"><span>Tax</span><span>{inr(inv.tax)}</span></div><div className="flex justify-between font-semibold text-base"><span>Total</span><span>{inr(inv.total)}</span></div></div>
+ <div className="flex gap-2 mt-5 noprint"><Btn variant="ghost" className="flex-1" onClick={()=>window.print()}><Printer size={16}/>Print</Btn><Btn className="flex-1" onClick={()=>setInv(null)}>New bill</Btn></div></div></div>}</Page>;}
+
+
+
+========== FILE: client\src\pages\Purchases.jsx ==========
+
+import {useEffect,useState,useCallback} from 'react';import {Plus,Trash2,Download} from 'lucide-react';import toast from 'react-hot-toast';
+import api,{msg,download} from '../api';import {Card,Page,Btn,Input,Spinner,Empty,Modal,Table,inr} from '../ui';
+const row=()=>({medicine_id:'',batch_no:'',quantity:'',purchase_price:'',selling_price:'',expiry_date:''});
+export default function Purchases(){const [rows,setRows]=useState(null);const [open,setOpen]=useState(false);const [sup,setSup]=useState([]);const [meds,setMeds]=useState([]);const [sid,setSid]=useState('');const [items,setItems]=useState([row()]);const [busy,setBusy]=useState(false);
+ const load=useCallback(()=>api.get('/purchases').then(r=>setRows(r.data)),[]);useEffect(()=>{load();api.get('/suppliers').then(r=>setSup(r.data));api.get('/medicines').then(r=>setMeds(r.data));},[load]);
+ const set=(i,k,v)=>setItems(items.map((x,j)=>j===i?{...x,[k]:v}:x));
+ const save=async()=>{if(!sid)return toast.error('Choose a supplier.');setBusy(true);try{const d=await api.post('/purchases',{supplier_id:sid,items:items.map(x=>({...x,quantity:+x.quantity,purchase_price:+x.purchase_price,selling_price:+x.selling_price}))});toast.success('Purchase saved. Stock updated.');setOpen(false);setItems([row()]);setSid('');load();}catch(e){toast.error(msg(e));}setBusy(false);};
+ const sel="rounded-xl border border-slate-200 px-3 py-2.5 text-sm bg-white";
+ return <Page title="Purchases" sub="Record medicines received from suppliers. Stock increases automatically." action={<div className="flex gap-2"><Btn variant="ghost" onClick={()=>download('purchases')}><Download size={16}/>CSV</Btn><Btn onClick={()=>setOpen(true)}><Plus size={16}/>New purchase</Btn></div>}>
+ <Card className="overflow-x-auto">{!rows?<Spinner/>:!rows.length?<Empty text="No purchases yet."/>:<Table heads={['Reference','Supplier','Date','Total','Status']}>{rows.map(p=><tr key={p.id}><td className="font-medium">{p.reference_no}</td><td>{p.company_name}</td><td className="text-slate-500">{p.created_at}</td><td>{inr(p.total_amount)}</td><td className="capitalize">{p.status}</td></tr>)}</Table>}</Card>
+ {open&&<Modal title="New purchase" onClose={()=>setOpen(false)}><div className="space-y-4"><select className={sel+' w-full'} value={sid} onChange={e=>setSid(e.target.value)}><option value="">Select supplierâ€¦</option>{sup.map(s=><option key={s.id} value={s.id}>{s.company_name}</option>)}</select>
+ {items.map((x,i)=><div key={i} className="rounded-xl border p-3 space-y-2 bg-slate-50"><div className="flex gap-2"><select className={sel+' flex-1'} value={x.medicine_id} onChange={e=>set(i,'medicine_id',e.target.value)}><option value="">Medicineâ€¦</option>{meds.map(m=><option key={m.id} value={m.id}>{m.name}</option>)}</select>{items.length>1&&<button onClick={()=>setItems(items.filter((_,j)=>j!==i))} className="text-slate-400 hover:text-red-600"><Trash2 size={16}/></button>}</div>
+ <div className="grid grid-cols-2 gap-2"><Input placeholder="Batch number" value={x.batch_no} onChange={e=>set(i,'batch_no',e.target.value)}/><Input type="number" placeholder="Quantity" value={x.quantity} onChange={e=>set(i,'quantity',e.target.value)}/><Input type="number" step="0.01" placeholder="Cost price" value={x.purchase_price} onChange={e=>set(i,'purchase_price',e.target.value)}/><Input type="number" step="0.01" placeholder="Selling price" value={x.selling_price} onChange={e=>set(i,'selling_price',e.target.value)}/></div><label className="text-xs text-slate-500">Expiry date<Input type="date" value={x.expiry_date} onChange={e=>set(i,'expiry_date',e.target.value)}/></label></div>)}
+ <button onClick={()=>setItems([...items,row()])} className="text-sm text-brand font-medium">+ Add another medicine</button><Btn onClick={save} disabled={busy} className="w-full">{busy?'Savingâ€¦':'Save purchase'}</Btn></div></Modal>}</Page>;}
+
+
+
+========== FILE: client\src\pages\Sales.jsx ==========
+
+import {useEffect,useState,useCallback} from 'react';import {Download,Undo2,Eye} from 'lucide-react';import toast from 'react-hot-toast';
+import api,{msg,download} from '../api';import {Card,Page,Btn,Input,Spinner,Empty,Modal,Table,inr} from '../ui';
+export default function Sales(){const admin=JSON.parse(localStorage.getItem('user'))?.role==='admin';const [rows,setRows]=useState(null);const [fl,setFl]=useState({q:'',payment:'',from:'',to:''});const [d,setD]=useState(null);
+ const load=useCallback(()=>api.get('/sales-search',{params:fl}).then(r=>setRows(r.data)).catch(e=>toast.error(msg(e))),[fl]);useEffect(()=>{const t=setTimeout(load,250);return()=>clearTimeout(t);},[load]);
+ const view=async s=>setD((await api.get('/sales/'+s.id)).data);
+ const ret=async()=>{if(!confirm('Return this whole sale? Stock will be added back.'))return;try{await api.post(`/sales/${d.id}/return`,{reason:'Customer return'});toast.success('Sale returned. Stock restored.');setD(null);load();}catch(e){toast.error(msg(e));}};
+ const st={completed:'bg-emerald-50 text-emerald-700',returned:'bg-amber-50 text-amber-700',cancelled:'bg-red-50 text-red-700'};
+ return <Page title="Sales" sub="Every bill. Sales are never deleted â€” returns restore stock and keep a record." action={admin&&<Btn variant="ghost" onClick={()=>download('sales')}><Download size={16}/>Export CSV</Btn>}>
+ <Card className="p-4 grid sm:grid-cols-4 gap-3"><Input placeholder="Invoice or customerâ€¦" value={fl.q} onChange={e=>setFl({...fl,q:e.target.value})}/><select className="rounded-xl border border-slate-200 px-3 text-sm bg-white" value={fl.payment} onChange={e=>setFl({...fl,payment:e.target.value})}><option value="">All payments</option>{['cash','upi','card','other'].map(p=><option key={p}>{p}</option>)}</select><Input type="date" value={fl.from} onChange={e=>setFl({...fl,from:e.target.value})}/><Input type="date" value={fl.to} onChange={e=>setFl({...fl,to:e.target.value})}/></Card>
+ <Card className="overflow-x-auto">{!rows?<Spinner/>:!rows.length?<Empty text="No sales match."/>:<Table heads={['Invoice','Date','Customer','Total','Payment','Status','']}>{rows.map(s=><tr key={s.id}><td className="font-medium">{s.invoice_no}</td><td className="text-slate-500">{s.created_at}</td><td>{s.customer_name}</td><td>{inr(s.total)}</td><td className="uppercase text-xs">{s.payment_method}</td><td><span className={`px-2.5 py-1 rounded-full text-xs capitalize ${st[s.status]}`}>{s.status}</span></td><td><button onClick={()=>view(s)} className="text-slate-400 hover:text-brand"><Eye size={16}/></button></td></tr>)}</Table>}</Card>
+ {d&&<Modal title={'Invoice '+d.invoice_no} onClose={()=>setD(null)}><table className="w-full text-sm"><tbody>{d.items.map(i=><tr key={i.id} className="border-b"><td className="py-2">{i.name}<div className="text-xs text-slate-400">Batch {i.batch_no} Ã— {i.quantity}</div></td><td className="text-right">{inr(i.line_total)}</td></tr>)}</tbody></table><div className="text-sm mt-3 space-y-1"><div className="flex justify-between"><span>Tax</span><span>{inr(d.tax)}</span></div><div className="flex justify-between font-semibold"><span>Total</span><span>{inr(d.total)}</span></div></div>
+ <div className="flex gap-2 mt-5"><Btn variant="ghost" className="flex-1" onClick={()=>window.print()}>Print</Btn>{admin&&d.status==='completed'&&<Btn className="flex-1" onClick={ret}><Undo2 size={16}/>Return sale</Btn>}</div></Modal>}</Page>;}
+
+
+
+========== FILE: client\src\pages\Staff.jsx ==========
+
+import {useEffect,useState,useCallback} from 'react';import {Plus} from 'lucide-react';import toast from 'react-hot-toast';
+import api,{msg} from '../api';import {Card,Page,Btn,Input,Spinner,Modal,Table} from '../ui';
+export default function Staff(){const [rows,setRows]=useState(null);const [f,setF]=useState(null);const load=useCallback(()=>api.get('/users').then(r=>setRows(r.data)).catch(e=>toast.error(msg(e))),[]);useEffect(()=>{load();},[load]);
+ const save=async e=>{e.preventDefault();try{await api.post('/users',f);toast.success('Staff account created');setF(null);load();}catch(x){toast.error(msg(x));}};
+ const tog=async u=>{try{await api.patch(`/users/${u.id}/active`,{active:!u.is_active});load();}catch(x){toast.error(msg(x));}};
+ return <Page title="Staff" sub="People who can sign in. Staff can bill and view stock, but cannot change prices, medicines or reports." action={<Btn onClick={()=>setF({name:'',email:'',password:''})}><Plus size={16}/>Add staff</Btn>}>
+ <Card className="overflow-x-auto">{!rows?<Spinner/>:<Table heads={['Name','Email','Role','Status','']}>{rows.map(u=><tr key={u.id}><td className="font-medium">{u.name}</td><td>{u.email}</td><td className="capitalize">{u.role}</td><td>{u.is_active?'Active':'Disabled'}</td><td className="text-right">{u.role!=='admin'&&<button onClick={()=>tog(u)} className="text-sm text-brand">{u.is_active?'Disable':'Enable'}</button>}</td></tr>)}</Table>}</Card>
+ {f&&<Modal title="Add staff" onClose={()=>setF(null)}><form onSubmit={save} className="space-y-3"><Input required placeholder="Full name" value={f.name} onChange={e=>setF({...f,name:e.target.value})}/><Input required type="email" placeholder="Email" value={f.email} onChange={e=>setF({...f,email:e.target.value})}/><Input required type="password" minLength={8} placeholder="Password (8+ characters)" value={f.password} onChange={e=>setF({...f,password:e.target.value})}/><Btn className="w-full">Create account</Btn></form></Modal>}</Page>;}
+
+
+
+========== FILE: client\src\pages\Suppliers.jsx ==========
+
+import {useEffect,useState,useCallback} from 'react';import {Plus,Pencil,Archive} from 'lucide-react';import toast from 'react-hot-toast';
+import api,{msg} from '../api';import {Card,Page,Btn,Input,Spinner,Empty,Modal,Table} from '../ui';
+export default function Suppliers(){const [rows,setRows]=useState(null);const [f,setF]=useState(null);
+ const load=useCallback(()=>api.get('/suppliers').then(r=>setRows(r.data)).catch(e=>toast.error(msg(e))),[]);useEffect(()=>{load();},[load]);
+ const save=async e=>{e.preventDefault();try{f.id?await api.put('/suppliers/'+f.id,f):await api.post('/suppliers',f);toast.success('Saved');setF(null);load();}catch(x){toast.error(msg(x));}};
+ const arch=async s=>{if(!confirm(`Archive ${s.company_name}? Past purchases are kept.`))return;await api.delete('/suppliers/'+s.id);toast.success('Archived');load();};
+ const fld=(k,l)=><label className="block text-sm"><span className="text-slate-600">{l}</span><Input required={k==='company_name'} value={f[k]??''} onChange={e=>setF({...f,[k]:e.target.value})}/></label>;
+ return <Page title="Suppliers" sub="Companies you buy medicines from." action={<Btn onClick={()=>setF({})}><Plus size={16}/>Add supplier</Btn>}>
+ <Card className="overflow-x-auto">{!rows?<Spinner/>:!rows.length?<Empty text="No suppliers yet."/>:<Table heads={['Company','Contact','Phone','GSTIN','']}>{rows.map(s=><tr key={s.id}><td className="font-medium">{s.company_name}</td><td>{s.contact_person}</td><td>{s.phone}</td><td className="text-slate-500">{s.gstin}</td><td className="text-right space-x-3"><button onClick={()=>setF(s)} className="text-slate-400 hover:text-brand"><Pencil size={16}/></button><button onClick={()=>arch(s)} className="text-slate-400 hover:text-red-600"><Archive size={16}/></button></td></tr>)}</Table>}</Card>
+ {f&&<Modal title={f.id?'Edit supplier':'Add supplier'} onClose={()=>setF(null)}><form onSubmit={save} className="space-y-3">{fld('company_name','Company name')}{fld('contact_person','Contact person')}{fld('phone','Phone')}{fld('email','Email')}{fld('gstin','GSTIN')}{fld('address','Address')}<div className="flex justify-end gap-2 pt-2"><Btn type="button" variant="ghost" onClick={()=>setF(null)}>Cancel</Btn><Btn>Save</Btn></div></form></Modal>}</Page>;}
+
+
+
+========== FILE: database\schema.sql ==========
+
+CREATE DATABASE IF NOT EXISTS medistock_pro CHARACTER SET utf8mb4;
+USE medistock_pro;
+CREATE TABLE users(id INT AUTO_INCREMENT PRIMARY KEY,name VARCHAR(100) NOT NULL,email VARCHAR(150) NOT NULL UNIQUE,password_hash VARCHAR(255) NOT NULL,role ENUM('admin','staff') NOT NULL DEFAULT 'staff',is_active TINYINT(1) DEFAULT 1,created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
+CREATE TABLE medicines(id INT AUTO_INCREMENT PRIMARY KEY,name VARCHAR(150) NOT NULL,generic_name VARCHAR(150),brand VARCHAR(100),category VARCHAR(80),dosage_form VARCHAR(50),strength VARCHAR(50),manufacturer VARCHAR(120),barcode VARCHAR(60) UNIQUE,description TEXT,requires_prescription TINYINT(1) DEFAULT 0,min_stock INT NOT NULL DEFAULT 10,tax_percent DECIMAL(5,2) NOT NULL DEFAULT 12.00,is_archived TINYINT(1) DEFAULT 0,created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,INDEX(name),INDEX(generic_name),INDEX(category));
+CREATE TABLE suppliers(id INT AUTO_INCREMENT PRIMARY KEY,company_name VARCHAR(150) NOT NULL,contact_person VARCHAR(100),phone VARCHAR(20),email VARCHAR(150),address TEXT,gstin VARCHAR(20),notes TEXT,is_archived TINYINT(1) DEFAULT 0,created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
+CREATE TABLE purchases(id INT AUTO_INCREMENT PRIMARY KEY,supplier_id INT NOT NULL,reference_no VARCHAR(50) NOT NULL UNIQUE,total_amount DECIMAL(12,2) NOT NULL,status ENUM('received','cancelled') DEFAULT 'received',created_by INT NOT NULL,created_at DATETIME DEFAULT CURRENT_TIMESTAMP,FOREIGN KEY(supplier_id) REFERENCES suppliers(id),FOREIGN KEY(created_by) REFERENCES users(id),INDEX(created_at));
+CREATE TABLE batches(id INT AUTO_INCREMENT PRIMARY KEY,medicine_id INT NOT NULL,supplier_id INT,purchase_id INT,batch_no VARCHAR(50) NOT NULL,purchase_price DECIMAL(10,2) NOT NULL,selling_price DECIMAL(10,2) NOT NULL,received_qty INT NOT NULL,available_qty INT NOT NULL,mfg_date DATE,expiry_date DATE NOT NULL,created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,CONSTRAINT chk_qty CHECK(available_qty>=0 AND available_qty<=received_qty),UNIQUE(medicine_id,batch_no),FOREIGN KEY(medicine_id) REFERENCES medicines(id),FOREIGN KEY(supplier_id) REFERENCES suppliers(id),FOREIGN KEY(purchase_id) REFERENCES purchases(id),INDEX(expiry_date));
+CREATE TABLE purchase_items(id INT AUTO_INCREMENT PRIMARY KEY,purchase_id INT NOT NULL,medicine_id INT NOT NULL,batch_id INT NOT NULL,quantity INT NOT NULL,purchase_price DECIMAL(10,2) NOT NULL,selling_price DECIMAL(10,2) NOT NULL,expiry_date DATE NOT NULL,FOREIGN KEY(purchase_id) REFERENCES purchases(id) ON DELETE CASCADE,FOREIGN KEY(medicine_id) REFERENCES medicines(id),FOREIGN KEY(batch_id) REFERENCES batches(id));
+CREATE TABLE sales(id INT AUTO_INCREMENT PRIMARY KEY,invoice_no VARCHAR(30) NOT NULL UNIQUE,idempotency_key VARCHAR(64) UNIQUE,customer_name VARCHAR(100),subtotal DECIMAL(12,2) NOT NULL,discount DECIMAL(12,2) NOT NULL DEFAULT 0,tax DECIMAL(12,2) NOT NULL,total DECIMAL(12,2) NOT NULL,payment_method ENUM('cash','upi','card','other') NOT NULL,status ENUM('completed','returned','cancelled') DEFAULT 'completed',created_by INT NOT NULL,created_at DATETIME DEFAULT CURRENT_TIMESTAMP,FOREIGN KEY(created_by) REFERENCES users(id),INDEX(created_at));
+CREATE TABLE sale_items(id INT AUTO_INCREMENT PRIMARY KEY,sale_id INT NOT NULL,medicine_id INT NOT NULL,batch_id INT NOT NULL,quantity INT NOT NULL,unit_price DECIMAL(10,2) NOT NULL,unit_cost DECIMAL(10,2) NOT NULL,discount DECIMAL(10,2) NOT NULL DEFAULT 0,tax_percent DECIMAL(5,2) NOT NULL,tax_amount DECIMAL(10,2) NOT NULL,line_total DECIMAL(12,2) NOT NULL,FOREIGN KEY(sale_id) REFERENCES sales(id),FOREIGN KEY(medicine_id) REFERENCES medicines(id),FOREIGN KEY(batch_id) REFERENCES batches(id));
+CREATE TABLE stock_movements(id INT AUTO_INCREMENT PRIMARY KEY,batch_id INT NOT NULL,medicine_id INT NOT NULL,type ENUM('purchase','sale','return','adjustment') NOT NULL,quantity_change INT NOT NULL,reason VARCHAR(255),reference VARCHAR(50),user_id INT,created_at DATETIME DEFAULT CURRENT_TIMESTAMP,FOREIGN KEY(batch_id) REFERENCES batches(id),FOREIGN KEY(medicine_id) REFERENCES medicines(id),INDEX(created_at));
+CREATE TABLE notifications(id INT AUTO_INCREMENT PRIMARY KEY,category ENUM('low_stock','expiring','expired','purchase','sale','inventory') NOT NULL,message VARCHAR(255) NOT NULL,dedupe_key VARCHAR(100) UNIQUE,is_read TINYINT(1) DEFAULT 0,created_at DATETIME DEFAULT CURRENT_TIMESTAMP);
+CREATE TABLE returns(id INT AUTO_INCREMENT PRIMARY KEY,sale_id INT NOT NULL,reason VARCHAR(255),refund_amount DECIMAL(12,2) NOT NULL,created_by INT NOT NULL,created_at DATETIME DEFAULT CURRENT_TIMESTAMP,FOREIGN KEY(sale_id) REFERENCES sales(id),FOREIGN KEY(created_by) REFERENCES users(id));
+CREATE TABLE return_items(id INT AUTO_INCREMENT PRIMARY KEY,return_id INT NOT NULL,sale_item_id INT NOT NULL,quantity INT NOT NULL,FOREIGN KEY(return_id) REFERENCES returns(id) ON DELETE CASCADE,FOREIGN KEY(sale_item_id) REFERENCES sale_items(id));
+CREATE TABLE audit_logs(id INT AUTO_INCREMENT PRIMARY KEY,user_id INT,action VARCHAR(80) NOT NULL,entity VARCHAR(50),entity_id INT,details JSON,created_at DATETIME DEFAULT CURRENT_TIMESTAMP,INDEX(created_at));
+CREATE TABLE pharmacy_settings(id INT PRIMARY KEY DEFAULT 1,name VARCHAR(150) DEFAULT 'MediStock Pharmacy',address TEXT,phone VARCHAR(20),gstin VARCHAR(20),expiry_critical_days INT DEFAULT 30,expiry_warning_days INT DEFAULT 90);
+INSERT IGNORE INTO pharmacy_settings(id,name,address) VALUES(1,'Demo Pharmacy','Patna, Bihar');
+
+
+
+========== FILE: server\.env.example ==========
+
+PORT=5000
+DB_HOST=localhost
+DB_USER=root
+DB_PASSWORD=your_mysql_password
+DB_NAME=medistock_pro
+JWT_SECRET=change_this_to_a_long_random_string
+ADMIN_EMAIL=admin@example.com
+# Put the password in double quotes. Do not use # without quotes.
+ADMIN_PASSWORD="choose_a_strong_password"
+
+
+
+========== FILE: server\package.json ==========
+
+{"name":"medistock-server","version":"1.0.0","main":"server.js","scripts":{"start":"node server.js","seed":"node seed.js"},"dependencies":{"bcrypt":"^5.1.1","cors":"^2.8.5","dotenv":"^16.4.5","express":"^4.19.2","jsonwebtoken":"^9.0.2","mysql2":"^3.11.0"}}
+
+
+
+========== FILE: server\seed.js ==========
+
+require('dotenv').config();const bcrypt=require('bcrypt'),pool=require('./config/db');
+(async()=>{const {ADMIN_EMAIL,ADMIN_PASSWORD}=process.env;if(!ADMIN_EMAIL||!ADMIN_PASSWORD)throw new Error('Set ADMIN_EMAIL and ADMIN_PASSWORD in .env');
+ await pool.query('INSERT IGNORE INTO users(name,email,password_hash,role) VALUES(?,?,?,\'admin\')',['Pharmacy Owner',ADMIN_EMAIL,await bcrypt.hash(ADMIN_PASSWORD,10)]);
+ const [[{n}]]=await pool.query('SELECT COUNT(*) n FROM medicines');if(n>0){console.log('Admin ready. Demo data already present.');return process.exit();}
+ await pool.query("INSERT INTO suppliers(company_name,contact_person,phone,gstin) VALUES('Sunrise Pharma Distributors','Rakesh Kumar','9000000001','10AAAAA0000A1Z5'),('HealthLine Wholesale','Anita Singh','9000000002','10BBBBB0000B1Z5')");
+ const meds=[['Paracetamol 500mg','Paracetamol','Calpol','Pain Relief','Tablet','500mg','8901000000011',20],['Amoxicillin 250mg','Amoxicillin','Mox','Antibiotic','Capsule','250mg','8901000000028',15],['Cetirizine 10mg','Cetirizine','Cetzine','Allergy','Tablet','10mg','8901000000035',10],['ORS Sachet','ORS','Electral','Hydration','Powder','21g','8901000000042',10]];
+ for(const m of meds)await pool.query('INSERT INTO medicines(name,generic_name,brand,category,dosage_form,strength,barcode,min_stock) VALUES(?,?,?,?,?,?,?,?)',m);
+ const [[u]]=await pool.query('SELECT id FROM users WHERE role=\'admin\' LIMIT 1');
+ const [p]=await pool.query("INSERT INTO purchases(supplier_id,reference_no,total_amount,created_by) VALUES(1,'PUR-DEMO-1',0,?)",[u.id]);
+ const b=[[1,'PCM-A1',1.2,2,200,'DATE_ADD(CURDATE(),INTERVAL 400 DAY)'],[1,'PCM-OLD',1.1,2,50,'DATE_SUB(CURDATE(),INTERVAL 20 DAY)'],[2,'AMX-B1',4,7,8,'DATE_ADD(CURDATE(),INTERVAL 20 DAY)'],[3,'CTZ-C1',0.8,1.5,100,'DATE_ADD(CURDATE(),INTERVAL 200 DAY)'],[4,'ORS-D1',9,15,6,'DATE_ADD(CURDATE(),INTERVAL 120 DAY)']];
+ for(const x of b){const [r]=await pool.query(`INSERT INTO batches(medicine_id,supplier_id,purchase_id,batch_no,purchase_price,selling_price,received_qty,available_qty,expiry_date) VALUES(?,1,?,?,?,?,?,?,${x[5]})`,[x[0],p.insertId,x[1],x[2],x[3],x[4],x[4]]);
+  await pool.query("INSERT INTO stock_movements(batch_id,medicine_id,type,quantity_change,reference,user_id) VALUES(?,?,'purchase',?,'PUR-DEMO-1',?)",[r.insertId,x[0],x[4],u.id]);}
+ console.log('Seeded admin + demo data.');process.exit();})().catch(e=>{console.error(e.message);process.exit(1);});
+
+
+
+========== FILE: server\server.js ==========
+
+require('dotenv').config();
+const express=require('express'),cors=require('cors'),bcrypt=require('bcrypt'),jwt=require('jsonwebtoken');
+const pool=require('./config/db');
+if(!process.env.JWT_SECRET){console.error('JWT_SECRET missing in .env');process.exit(1);}
+const app=express();app.use(cors({origin:/localhost:\d+$/}));app.use(express.json());
+const wrap=f=>(q,r,n)=>f(q,r,n).catch(n);
+class HttpError extends Error{constructor(s,m){super(m);this.status=s;}}
+const auth=(req,res,next)=>{try{req.user=jwt.verify((req.headers.authorization||'').replace('Bearer ',''),process.env.JWT_SECRET);next();}catch{res.status(401).json({error:'Please log in again.'});}};
+const adminOnly=(req,res,next)=>req.user.role==='admin'?next():res.status(403).json({error:'Only the owner can do this.'});
+const audit=(c,uid,action,entity,id,d)=>c.query('INSERT INTO audit_logs(user_id,action,entity,entity_id,details) VALUES(?,?,?,?,?)',[uid,action,entity,id,JSON.stringify(d||{})]);
+const need=(o,f)=>{for(const k of f)if(o[k]===undefined||o[k]===null||o[k]==='')throw new HttpError(400,`${k} is required`);};
+
+app.get('/api/health',wrap(async(q,r)=>{await pool.query('SELECT 1');r.json({ok:true});}));
+app.post('/api/auth/login',wrap(async(q,r)=>{need(q.body,['email','password']);
+ const [[u]]=await pool.query('SELECT * FROM users WHERE email=? AND is_active=1',[q.body.email]);
+ if(!u||!(await bcrypt.compare(q.body.password,u.password_hash)))throw new HttpError(401,'Wrong email or password.');
+ r.json({token:jwt.sign({id:u.id,role:u.role,name:u.name},process.env.JWT_SECRET,{expiresIn:'8h'}),user:{id:u.id,name:u.name,role:u.role}});}));
+app.use('/api',auth);
+
+app.post('/api/users',adminOnly,wrap(async(q,r)=>{need(q.body,['name','email','password']);
+ if(q.body.password.length<8)throw new HttpError(400,'Password must be at least 8 characters.');
+ const [x]=await pool.query('INSERT INTO users(name,email,password_hash,role) VALUES(?,?,?,\'staff\')',[q.body.name,q.body.email,await bcrypt.hash(q.body.password,10)]);
+ await audit(pool,q.user.id,'create_staff','user',x.insertId);r.status(201).json({id:x.insertId});}));
+
+// Medicines
+app.get('/api/medicines',wrap(async(q,r)=>{const s=`%${q.query.search||''}%`;
+ const [rows]=await pool.query(`SELECT m.*,COALESCE(SUM(CASE WHEN b.expiry_date>=CURDATE() THEN b.available_qty END),0) AS stock FROM medicines m LEFT JOIN batches b ON b.medicine_id=m.id WHERE m.is_archived=0 AND (m.name LIKE ? OR m.generic_name LIKE ? OR m.barcode=?) GROUP BY m.id ORDER BY m.name LIMIT 200`,[s,s,q.query.search||'']);r.json(rows);}));
+app.post('/api/medicines',adminOnly,wrap(async(q,r)=>{need(q.body,['name']);const b=q.body;
+ const [x]=await pool.query('INSERT INTO medicines(name,generic_name,brand,category,dosage_form,strength,manufacturer,barcode,min_stock,tax_percent) VALUES(?,?,?,?,?,?,?,?,?,?)',[b.name,b.generic_name,b.brand,b.category,b.dosage_form,b.strength,b.manufacturer,b.barcode||null,b.min_stock??10,b.tax_percent??12]);r.status(201).json({id:x.insertId});}));
+app.put('/api/medicines/:id',adminOnly,wrap(async(q,r)=>{need(q.body,['name']);const b=q.body;
+ await pool.query('UPDATE medicines SET name=?,generic_name=?,brand=?,category=?,min_stock=?,tax_percent=? WHERE id=?',[b.name,b.generic_name,b.brand,b.category,b.min_stock??10,b.tax_percent??12,q.params.id]);r.json({ok:true});}));
+app.delete('/api/medicines/:id',adminOnly,wrap(async(q,r)=>{await pool.query('UPDATE medicines SET is_archived=1 WHERE id=?',[q.params.id]);r.json({ok:true,archived:true});}));
+
+// Batches + expiry status
+app.get('/api/batches',wrap(async(q,r)=>{const [rows]=await pool.query(`SELECT b.*,m.name AS medicine,DATEDIFF(b.expiry_date,CURDATE()) AS days_left,CASE WHEN b.expiry_date<CURDATE() THEN 'expired' WHEN DATEDIFF(b.expiry_date,CURDATE())<=30 THEN 'critical' WHEN DATEDIFF(b.expiry_date,CURDATE())<=90 THEN 'warning' ELSE 'safe' END AS expiry_status FROM batches b JOIN medicines m ON m.id=b.medicine_id WHERE (?='' OR b.medicine_id=?) ORDER BY b.expiry_date`,[q.query.medicine_id||'',q.query.medicine_id||0]);r.json(rows);}));
+app.post('/api/stock/adjust',adminOnly,wrap(async(q,r)=>{need(q.body,['batch_id','change','reason']);const c=await pool.getConnection();
+ try{await c.beginTransaction();const [[b]]=await c.query('SELECT * FROM batches WHERE id=? FOR UPDATE',[q.body.batch_id]);
+ if(!b)throw new HttpError(404,'Batch not found.');const n=b.available_qty+Number(q.body.change);
+ if(n<0||n>b.received_qty)throw new HttpError(400,'Stock cannot go below zero or above received quantity.');
+ await c.query('UPDATE batches SET available_qty=? WHERE id=?',[n,b.id]);
+ await c.query('INSERT INTO stock_movements(batch_id,medicine_id,type,quantity_change,reason,user_id) VALUES(?,?,\'adjustment\',?,?,?)',[b.id,b.medicine_id,q.body.change,q.body.reason,q.user.id]);
+ await audit(c,q.user.id,'stock_adjust','batch',b.id,q.body);await c.commit();r.json({available_qty:n});}
+ catch(e){await c.rollback();throw e;}finally{c.release();}}));
+
+// Suppliers
+app.get('/api/suppliers',wrap(async(q,r)=>r.json((await pool.query('SELECT * FROM suppliers WHERE is_archived=0 ORDER BY company_name'))[0])));
+app.post('/api/suppliers',adminOnly,wrap(async(q,r)=>{need(q.body,['company_name']);const b=q.body;
+ const [x]=await pool.query('INSERT INTO suppliers(company_name,contact_person,phone,email,address,gstin) VALUES(?,?,?,?,?,?)',[b.company_name,b.contact_person,b.phone,b.email,b.address,b.gstin]);r.status(201).json({id:x.insertId});}));
+
+// Purchases (transaction; creates batches + movements)
+app.post('/api/purchases',adminOnly,wrap(async(q,r)=>{need(q.body,['supplier_id']);const items=q.body.items;
+ if(!Array.isArray(items)||!items.length)throw new HttpError(400,'Add at least one medicine.');
+ const c=await pool.getConnection();
+ try{await c.beginTransaction();let total=0;const ref='PUR-'+Date.now();
+ const [p]=await c.query('INSERT INTO purchases(supplier_id,reference_no,total_amount,created_by) VALUES(?,?,0,?)',[q.body.supplier_id,ref,q.user.id]);
+ for(const i of items){need(i,['medicine_id','batch_no','quantity','purchase_price','selling_price','expiry_date']);
+  if(!(i.quantity>0)||i.purchase_price<0||i.selling_price<0)throw new HttpError(400,'Invalid quantity or price.');
+  const [b]=await c.query('INSERT INTO batches(medicine_id,supplier_id,purchase_id,batch_no,purchase_price,selling_price,received_qty,available_qty,mfg_date,expiry_date) VALUES(?,?,?,?,?,?,?,?,?,?)',[i.medicine_id,q.body.supplier_id,p.insertId,i.batch_no,i.purchase_price,i.selling_price,i.quantity,i.quantity,i.mfg_date||null,i.expiry_date]);
+  await c.query('INSERT INTO purchase_items(purchase_id,medicine_id,batch_id,quantity,purchase_price,selling_price,expiry_date) VALUES(?,?,?,?,?,?,?)',[p.insertId,i.medicine_id,b.insertId,i.quantity,i.purchase_price,i.selling_price,i.expiry_date]);
+  await c.query('INSERT INTO stock_movements(batch_id,medicine_id,type,quantity_change,reference,user_id) VALUES(?,?,\'purchase\',?,?,?)',[b.insertId,i.medicine_id,i.quantity,ref,q.user.id]);
+  total+=i.quantity*i.purchase_price;}
+ await c.query('UPDATE purchases SET total_amount=? WHERE id=?',[total.toFixed(2),p.insertId]);
+ await audit(c,q.user.id,'purchase','purchase',p.insertId,{ref,total});await c.commit();r.status(201).json({id:p.insertId,reference_no:ref,total});}
+ catch(e){await c.rollback();if(e.code==='ER_DUP_ENTRY')e=new HttpError(400,'This batch number already exists for that medicine.');throw e;}finally{c.release();}}));
+app.get('/api/purchases',wrap(async(q,r)=>r.json((await pool.query('SELECT p.*,s.company_name FROM purchases p JOIN suppliers s ON s.id=p.supplier_id ORDER BY p.id DESC LIMIT 100'))[0])));
+
+// Sales: atomic, row-locked, expiry + stock re-checked on server, idempotent
+app.post('/api/sales',wrap(async(q,r)=>{need(q.body,['items','payment_method']);const {items,payment_method,customer_name,idempotency_key}=q.body;
+ if(!Array.isArray(items)||!items.length)throw new HttpError(400,'Cart is empty.');
+ if(!['cash','upi','card','other'].includes(payment_method))throw new HttpError(400,'Invalid payment method.');
+ if(idempotency_key){const [[d]]=await pool.query('SELECT id,invoice_no FROM sales WHERE idempotency_key=?',[idempotency_key]);if(d)return r.json({id:d.id,invoice_no:d.invoice_no,duplicate:true});}
+ const c=await pool.getConnection();
+ try{await c.beginTransaction();let sub=0,disc=0,tax=0;const lines=[];
+ for(const i of items){const qty=Number(i.quantity);if(!Number.isInteger(qty)||qty<=0)throw new HttpError(400,'Quantity must be a whole number above zero.');
+  const [[b]]=await c.query('SELECT b.*,m.tax_percent,m.name FROM batches b JOIN medicines m ON m.id=b.medicine_id WHERE b.id=? FOR UPDATE',[i.batch_id]);
+  if(!b)throw new HttpError(404,'Batch not found.');
+  if(b.expiry_date<new Date().toISOString().slice(0,10))throw new HttpError(400,`${b.name} (batch ${b.batch_no}) is expired and cannot be sold.`);
+  if(b.available_qty<qty)throw new HttpError(400,`Only ${b.available_qty} units of ${b.name} (batch ${b.batch_no}) are available.`);
+  const gross=b.selling_price*qty;let d=Number(i.discount||0);
+  if(d>0&&q.user.role!=='admin')throw new HttpError(403,'Only the owner can give discounts.');
+  if(d<0||d>gross)throw new HttpError(400,'Invalid discount.');
+  const t=+((gross-d)*b.tax_percent/100).toFixed(2);sub+=gross;disc+=d;tax+=t;lines.push({b,qty,d,t,total:+(gross-d+t).toFixed(2)});}
+ const total=+(sub-disc+tax).toFixed(2);const inv='INV-'+new Date().toISOString().slice(0,10).replace(/-/g,'')+'-'+Math.random().toString(36).slice(2,7).toUpperCase();
+ const [s]=await c.query('INSERT INTO sales(invoice_no,idempotency_key,customer_name,subtotal,discount,tax,total,payment_method,created_by) VALUES(?,?,?,?,?,?,?,?,?)',[inv,idempotency_key||null,customer_name||null,sub.toFixed(2),disc.toFixed(2),tax.toFixed(2),total,payment_method,q.user.id]);
+ for(const l of lines){await c.query('INSERT INTO sale_items(sale_id,medicine_id,batch_id,quantity,unit_price,unit_cost,discount,tax_percent,tax_amount,line_total) VALUES(?,?,?,?,?,?,?,?,?,?)',[s.insertId,l.b.medicine_id,l.b.id,l.qty,l.b.selling_price,l.b.purchase_price,l.d,l.b.tax_percent,l.t,l.total]);
+  await c.query('UPDATE batches SET available_qty=available_qty-? WHERE id=?',[l.qty,l.b.id]);
+  await c.query('INSERT INTO stock_movements(batch_id,medicine_id,type,quantity_change,reference,user_id) VALUES(?,?,\'sale\',?,?,?)',[l.b.id,l.b.medicine_id,-l.qty,inv,q.user.id]);}
+ await c.commit();r.status(201).json({id:s.insertId,invoice_no:inv,total});}
+ catch(e){await c.rollback();throw e;}finally{c.release();}}));
+app.get('/api/sales',wrap(async(q,r)=>r.json((await pool.query('SELECT * FROM sales ORDER BY id DESC LIMIT 100'))[0])));
+app.get('/api/sales/:id',wrap(async(q,r)=>{const [[s]]=await pool.query('SELECT * FROM sales WHERE id=?',[q.params.id]);if(!s)throw new HttpError(404,'Sale not found.');
+ const [items]=await pool.query('SELECT si.*,m.name,b.batch_no FROM sale_items si JOIN medicines m ON m.id=si.medicine_id JOIN batches b ON b.id=si.batch_id WHERE sale_id=?',[s.id]);r.json({...s,items});}));
+
+// Dashboard (real SQL) + low stock
+app.get('/api/dashboard',wrap(async(q,r)=>{const g=async(sql)=>(await pool.query(sql))[0][0];
+ const a=await g(`SELECT (SELECT COUNT(*) FROM medicines WHERE is_archived=0) medicines,(SELECT COALESCE(SUM(available_qty),0) FROM batches WHERE expiry_date>=CURDATE()) units,(SELECT COALESCE(SUM(available_qty*purchase_price),0) FROM batches WHERE expiry_date>=CURDATE()) inventory_value,(SELECT COALESCE(SUM(total),0) FROM sales WHERE status='completed' AND DATE(created_at)=CURDATE()) today_sales,(SELECT COALESCE(SUM(total),0) FROM sales WHERE status='completed' AND DATE_FORMAT(created_at,'%Y-%m')=DATE_FORMAT(CURDATE(),'%Y-%m')) month_sales,(SELECT COALESCE(SUM(si.line_total-si.tax_amount-si.unit_cost*si.quantity),0) FROM sale_items si JOIN sales s ON s.id=si.sale_id WHERE s.status='completed' AND DATE_FORMAT(s.created_at,'%Y-%m')=DATE_FORMAT(CURDATE(),'%Y-%m')) gross_profit_month,(SELECT COUNT(*) FROM batches WHERE available_qty>0 AND expiry_date<CURDATE()) expired_batches,(SELECT COUNT(*) FROM batches WHERE available_qty>0 AND expiry_date BETWEEN CURDATE() AND DATE_ADD(CURDATE(),INTERVAL 30 DAY)) expiring_soon`);
+ const [low]=await pool.query(`SELECT m.id,m.name,m.min_stock,COALESCE(SUM(CASE WHEN b.expiry_date>=CURDATE() THEN b.available_qty END),0) stock FROM medicines m LEFT JOIN batches b ON b.medicine_id=m.id WHERE m.is_archived=0 GROUP BY m.id HAVING stock<=m.min_stock ORDER BY stock`);
+ r.json({...a,low_stock_count:low.length,low_stock:low});}));
+
+app.get('/api/dashboard/trend',wrap(async(q,r)=>r.json((await pool.query("SELECT DATE_FORMAT(d.day,'%d %b') label,COALESCE(SUM(s.total),0) total FROM (SELECT CURDATE()-INTERVAL n DAY day FROM (SELECT 0 n UNION SELECT 1 UNION SELECT 2 UNION SELECT 3 UNION SELECT 4 UNION SELECT 5 UNION SELECT 6) x) d LEFT JOIN sales s ON DATE(s.created_at)=d.day AND s.status='completed' GROUP BY d.day ORDER BY d.day"))[0])));
+// Notifications (generated from live data, de-duplicated)
+app.get('/api/notifications',wrap(async(q,r)=>{
+ await pool.query(`INSERT IGNORE INTO notifications(category,message,dedupe_key) SELECT 'expired',CONCAT(m.name,' batch ',b.batch_no,' has expired'),CONCAT('exp-',b.id) FROM batches b JOIN medicines m ON m.id=b.medicine_id WHERE b.available_qty>0 AND b.expiry_date<CURDATE()`);
+ await pool.query(`INSERT IGNORE INTO notifications(category,message,dedupe_key) SELECT 'expiring',CONCAT(m.name,' batch ',b.batch_no,' expires on ',b.expiry_date),CONCAT('soon-',b.id) FROM batches b JOIN medicines m ON m.id=b.medicine_id WHERE b.available_qty>0 AND b.expiry_date BETWEEN CURDATE() AND DATE_ADD(CURDATE(),INTERVAL 30 DAY)`);
+ await pool.query(`INSERT IGNORE INTO notifications(category,message,dedupe_key) SELECT 'low_stock',CONCAT(x.name,' is low (',x.stock,' left)'),CONCAT('low-',x.id,'-',x.stock) FROM (SELECT m.id,m.name,m.min_stock,COALESCE(SUM(CASE WHEN b.expiry_date>=CURDATE() THEN b.available_qty END),0) stock FROM medicines m LEFT JOIN batches b ON b.medicine_id=m.id WHERE m.is_archived=0 GROUP BY m.id HAVING stock<=m.min_stock) x`);
+ r.json((await pool.query('SELECT * FROM notifications ORDER BY is_read,id DESC LIMIT 100'))[0]);}));
+app.post('/api/notifications/read-all',wrap(async(q,r)=>{await pool.query('UPDATE notifications SET is_read=1');r.json({ok:true});}));
+
+
+// ---- Stage 3 additions ----
+app.get('/api/me',wrap(async(q,r)=>r.json((await pool.query('SELECT id,name,email,role FROM users WHERE id=?',[q.user.id]))[0][0])));
+app.post('/api/auth/change-password',wrap(async(q,r)=>{need(q.body,['current','next']);if(q.body.next.length<8)throw new HttpError(400,'New password must be at least 8 characters.');
+ const [[u]]=await pool.query('SELECT password_hash FROM users WHERE id=?',[q.user.id]);if(!(await bcrypt.compare(q.body.current,u.password_hash)))throw new HttpError(400,'Current password is wrong.');
+ await pool.query('UPDATE users SET password_hash=? WHERE id=?',[await bcrypt.hash(q.body.next,10),q.user.id]);r.json({ok:true});}));
+app.get('/api/users',adminOnly,wrap(async(q,r)=>r.json((await pool.query('SELECT id,name,email,role,is_active,created_at FROM users ORDER BY id'))[0])));
+app.patch('/api/users/:id/active',adminOnly,wrap(async(q,r)=>{if(+q.params.id===q.user.id)throw new HttpError(400,'You cannot disable your own account.');await pool.query('UPDATE users SET is_active=? WHERE id=?',[q.body.active?1:0,q.params.id]);r.json({ok:true});}));
+app.get('/api/settings',wrap(async(q,r)=>r.json((await pool.query('SELECT * FROM pharmacy_settings WHERE id=1'))[0][0])));
+app.put('/api/settings',adminOnly,wrap(async(q,r)=>{const b=q.body;need(b,['name']);await pool.query('UPDATE pharmacy_settings SET name=?,address=?,phone=?,gstin=? WHERE id=1',[b.name,b.address,b.phone,b.gstin]);r.json({ok:true});}));
+app.put('/api/suppliers/:id',adminOnly,wrap(async(q,r)=>{need(q.body,['company_name']);const b=q.body;await pool.query('UPDATE suppliers SET company_name=?,contact_person=?,phone=?,email=?,address=?,gstin=? WHERE id=?',[b.company_name,b.contact_person,b.phone,b.email,b.address,b.gstin,q.params.id]);r.json({ok:true});}));
+app.delete('/api/suppliers/:id',adminOnly,wrap(async(q,r)=>{await pool.query('UPDATE suppliers SET is_archived=1 WHERE id=?',[q.params.id]);r.json({ok:true});}));
+app.post('/api/notifications/:id/read',wrap(async(q,r)=>{await pool.query('UPDATE notifications SET is_read=1 WHERE id=?',[q.params.id]);r.json({ok:true});}));
+app.get('/api/sales-search',wrap(async(q,r)=>{const w=['1=1'],a=[];const Q=q.query;
+ if(Q.q){w.push('(invoice_no LIKE ? OR customer_name LIKE ?)');a.push(`%${Q.q}%`,`%${Q.q}%`);}
+ if(Q.payment){w.push('payment_method=?');a.push(Q.payment);}if(Q.from){w.push('DATE(created_at)>=?');a.push(Q.from);}if(Q.to){w.push('DATE(created_at)<=?');a.push(Q.to);}
+ r.json((await pool.query(`SELECT * FROM sales WHERE ${w.join(' AND ')} ORDER BY id DESC LIMIT 200`,a))[0]);}));
+// Full return/cancel: restores each batch, records movements + return rows, all in one transaction
+app.post('/api/sales/:id/return',adminOnly,wrap(async(q,r)=>{const c=await pool.getConnection();
+ try{await c.beginTransaction();const [[s]]=await c.query('SELECT * FROM sales WHERE id=? FOR UPDATE',[q.params.id]);
+ if(!s)throw new HttpError(404,'Sale not found.');if(s.status!=='completed')throw new HttpError(400,'This sale was already returned or cancelled.');
+ const [items]=await c.query('SELECT * FROM sale_items WHERE sale_id=?',[s.id]);
+ const [rt]=await c.query('INSERT INTO returns(sale_id,reason,refund_amount,created_by) VALUES(?,?,?,?)',[s.id,q.body.reason||'Customer return',s.total,q.user.id]);
+ for(const i of items){await c.query('SELECT id FROM batches WHERE id=? FOR UPDATE',[i.batch_id]);await c.query('UPDATE batches SET available_qty=available_qty+? WHERE id=?',[i.quantity,i.batch_id]);
+  await c.query('INSERT INTO return_items(return_id,sale_item_id,quantity) VALUES(?,?,?)',[rt.insertId,i.id,i.quantity]);
+  await c.query("INSERT INTO stock_movements(batch_id,medicine_id,type,quantity_change,reason,reference,user_id) VALUES(?,?,'return',?,?,?,?)",[i.batch_id,i.medicine_id,i.quantity,q.body.reason||'Customer return',s.invoice_no,q.user.id]);}
+ await c.query("UPDATE sales SET status='returned' WHERE id=?",[s.id]);await audit(c,q.user.id,'sale_return','sale',s.id,{refund:s.total});await c.commit();r.json({ok:true,refund:s.total});}
+ catch(e){await c.rollback();throw e;}finally{c.release();}}));
+app.get('/api/analytics',wrap(async(q,r)=>{const f=q.query.from||'1970-01-01',t=q.query.to||'2999-12-31';const p=[f,t];
+ const [[s]]=await pool.query(`SELECT COALESCE(SUM(subtotal),0) gross,COALESCE(SUM(discount),0) discounts,COALESCE(SUM(tax),0) tax,COALESCE(SUM(total),0) revenue,COUNT(*) invoices FROM sales WHERE status='completed' AND DATE(created_at) BETWEEN ? AND ?`,p);
+ const [[g]]=await pool.query(`SELECT COALESCE(SUM(si.line_total-si.tax_amount-si.unit_cost*si.quantity),0) gross_profit FROM sale_items si JOIN sales s ON s.id=si.sale_id WHERE s.status='completed' AND DATE(s.created_at) BETWEEN ? AND ?`,p);
+ const [[pu]]=await pool.query(`SELECT COALESCE(SUM(total_amount),0) spent FROM purchases WHERE status='received' AND DATE(created_at) BETWEEN ? AND ?`,p);
+ const [top]=await pool.query(`SELECT m.name,SUM(si.quantity) units,SUM(si.line_total) revenue FROM sale_items si JOIN sales s ON s.id=si.sale_id JOIN medicines m ON m.id=si.medicine_id WHERE s.status='completed' AND DATE(s.created_at) BETWEEN ? AND ? GROUP BY m.id ORDER BY units DESC LIMIT 5`,p);
+ const [cat]=await pool.query(`SELECT COALESCE(m.category,'Other') category,SUM(si.line_total) revenue FROM sale_items si JOIN sales s ON s.id=si.sale_id JOIN medicines m ON m.id=si.medicine_id WHERE s.status='completed' AND DATE(s.created_at) BETWEEN ? AND ? GROUP BY category ORDER BY revenue DESC`,p);
+ const [[x]]=await pool.query('SELECT COALESCE(SUM(available_qty*purchase_price),0) expiry_loss FROM batches WHERE expiry_date<CURDATE()');
+ r.json({...s,...g,purchase_spend:pu.spent,top,categories:cat,expiry_loss:x.expiry_loss});}));
+const csv=(res,name,rows)=>{const h=rows.length?Object.keys(rows[0]):[];const e=v=>`"${String(v??'').replace(/"/g,'""')}"`;res.set({'Content-Type':'text/csv','Content-Disposition':`attachment; filename=${name}.csv`}).send([h.join(','),...rows.map(x=>h.map(k=>e(x[k])).join(','))].join('\n'));};
+app.get('/api/export/:what',adminOnly,wrap(async(q,r)=>{const m={sales:'SELECT invoice_no,created_at,customer_name,subtotal,discount,tax,total,payment_method,status FROM sales ORDER BY id DESC',inventory:"SELECT m.name medicine,b.batch_no,b.available_qty,b.purchase_price,b.selling_price,b.expiry_date FROM batches b JOIN medicines m ON m.id=b.medicine_id ORDER BY b.expiry_date",purchases:'SELECT p.reference_no,s.company_name supplier,p.total_amount,p.status,p.created_at FROM purchases p JOIN suppliers s ON s.id=p.supplier_id ORDER BY p.id DESC'};
+ if(!m[q.params.what])throw new HttpError(404,'Unknown report.');csv(r,q.params.what,(await pool.query(m[q.params.what]))[0]);}));
+app.use((e,q,r,n)=>{if(e.status)return r.status(e.status).json({error:e.message});
+ if(e.code==='ER_DUP_ENTRY')return r.status(400).json({error:'This record already exists.'});console.error(e);r.status(500).json({error:'Something went wrong. Please try again.'});});
+app.listen(process.env.PORT||5000,()=>console.log('MediStock API running on port '+(process.env.PORT||5000)));
+
+
+
+========== FILE: server\config\db.js ==========
+
+require('dotenv').config();
+const mysql = require('mysql2/promise');
+module.exports = mysql.createPool({host:process.env.DB_HOST||'localhost',user:process.env.DB_USER||'root',password:process.env.DB_PASSWORD||'',database:process.env.DB_NAME||'medistock_pro',connectionLimit:10,dateStrings:true,decimalNumbers:true});
+

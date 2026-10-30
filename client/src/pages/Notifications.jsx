@@ -1,0 +1,7 @@
+import {useEffect,useState,useCallback} from 'react';import {CheckCheck,AlertTriangle,Clock,CalendarX} from 'lucide-react';import toast from 'react-hot-toast';
+import api,{msg} from '../api';import {Card,Page,Btn,Spinner,Empty} from '../ui';
+const ic={low_stock:[AlertTriangle,'text-amber-600 bg-amber-50'],expiring:[Clock,'text-orange-600 bg-orange-50'],expired:[CalendarX,'text-red-600 bg-red-50']};
+export default function Notifications(){const [rows,setRows]=useState(null);const load=useCallback(()=>api.get('/notifications').then(r=>setRows(r.data)).catch(e=>toast.error(msg(e))),[]);useEffect(()=>{load();},[load]);
+ const one=async n=>{await api.post(`/notifications/${n.id}/read`);load();};const all=async()=>{await api.post('/notifications/read-all');load();};
+ return <Page title="Notifications" sub="Stock and expiry alerts, generated from your live records." action={<Btn variant="ghost" onClick={all}><CheckCheck size={16}/>Mark all read</Btn>}>
+ <Card>{!rows?<Spinner/>:!rows.length?<Empty text="You're all caught up."/>:<ul className="divide-y">{rows.map(n=>{const [I,c]=ic[n.category]||ic.low_stock;return <li key={n.id} className={`p-4 flex items-center gap-4 ${n.is_read?'opacity-55':''}`}><div className={`h-10 w-10 rounded-xl grid place-items-center ${c}`}><I size={18}/></div><div className="flex-1 text-sm"><p className="font-medium">{n.message}</p><p className="text-xs text-slate-400">{n.created_at}</p></div>{!n.is_read&&<button onClick={()=>one(n)} className="text-xs text-brand font-medium">Mark read</button>}</li>;})}</ul>}</Card></Page>;}
