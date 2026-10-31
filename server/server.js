@@ -2,7 +2,30 @@
 const express=require('express'),cors=require('cors'),bcrypt=require('bcrypt'),jwt=require('jsonwebtoken');
 const pool=require('./config/db');
 if(!process.env.JWT_SECRET){console.error('JWT_SECRET missing in .env');process.exit(1);}
-const app=express();app.use(cors({origin:/localhost:\d+$/}));app.use(express.json());
+// const app=express();app.use(cors({origin:/localhost:\d+$/}));app.use(express.json());
+
+const app = express();
+
+const allowedOrigins = [
+  'http://localhost:5173',
+  'http://localhost:3000',
+  'https://medi-stock-pro.vercel.app',
+];
+
+app.use(cors({
+  origin: (origin, callback) => {
+    // Allow requests without an Origin header (e.g. local server tools)
+    if (!origin || allowedOrigins.includes(origin) || origin.endsWith('.vercel.app')) {
+      return callback(null, true);
+    }
+    return callback(new Error('Not allowed by CORS'));
+  },
+  credentials: true,
+}));
+
+app.use(express.json());
+
+
 const wrap=f=>(q,r,n)=>f(q,r,n).catch(n);
 class HttpError extends Error{constructor(s,m){super(m);this.status=s;}}
 const auth=(req,res,next)=>{try{req.user=jwt.verify((req.headers.authorization||'').replace('Bearer ',''),process.env.JWT_SECRET);next();}catch{res.status(401).json({error:'Please log in again.'});}};
