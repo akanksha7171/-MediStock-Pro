@@ -1,4 +1,4 @@
-require('dotenv').config();
+﻿require('dotenv').config();
 const express=require('express'),cors=require('cors'),bcrypt=require('bcrypt'),jwt=require('jsonwebtoken');
 const pool=require('./config/db');
 if(!process.env.JWT_SECRET){console.error('JWT_SECRET missing in .env');process.exit(1);}
@@ -147,4 +147,6 @@ app.get('/api/export/:what',adminOnly,wrap(async(q,r)=>{const m={sales:'SELECT i
  if(!m[q.params.what])throw new HttpError(404,'Unknown report.');csv(r,q.params.what,(await pool.query(m[q.params.what]))[0]);}));
 app.use((e,q,r,n)=>{if(e.status)return r.status(e.status).json({error:e.message});
  if(e.code==='ER_DUP_ENTRY')return r.status(400).json({error:'This record already exists.'});console.error(e);r.status(500).json({error:'Something went wrong. Please try again.'});});
-app.listen(process.env.PORT||5000,()=>console.log('MediStock API running on port '+(process.env.PORT||5000)));
+if(require.main===module){app.listen(process.env.PORT||5000,()=>console.log('MediStock API running on port '+(process.env.PORT||5000)));}
+module.exports=app;
+
