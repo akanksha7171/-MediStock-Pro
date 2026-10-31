@@ -1,31 +1,29 @@
-# MediStock Pro
+# MediStock Pro (PostgreSQL / Neon version)
 
-Pharmacy stock, expiry and billing system. React (Vite + Tailwind) frontend, Express backend, MySQL database.
+React (Vite + Tailwind) frontend, Express backend, PostgreSQL database (Neon).
 
-## Run on Windows (first time)
-1. Install **Node.js LTS** (nodejs.org) and **MySQL** (or XAMPP). Remember your MySQL root password.
-2. Open Command Prompt in the project folder and create the database:
-   `mysql -u root -p < database\schema.sql`
-3. Backend:
-   `cd server` -> `copy .env.example .env` -> open `.env` in Notepad and fill in your MySQL password, a long random JWT_SECRET, ADMIN_EMAIL and ADMIN_PASSWORD (keep the password in double quotes) -> `npm install` -> `npm run seed` -> `npm start`
-4. Frontend (second Command Prompt): `cd client` -> `npm install` -> `npm run dev`
-5. Open http://localhost:5173 and sign in with the ADMIN_EMAIL / ADMIN_PASSWORD from your `.env`.
+## Database setup (once)
+Run `database/schema.sql` on your database: in the Neon dashboard open **SQL Editor**, paste the file, click Run.
+(Locally: `psql "<your DATABASE_URL>" -f database/schema.sql`)
 
-## What works (tested against a real database through the API)
-- Login (JWT, bcrypt), owner/staff roles, staff accounts (create, disable), change password API
-- Medicines: add, search (name/generic/barcode), archive. Edit exists in the API only.
-- Batches with expiry status; stock adjustment API with reason and audit log
-- Purchases (transactional, creates batches + stock movements; duplicate batch numbers rejected)
-- Billing/POS: server re-checks expiry and stock, row locking, duplicate-submit protection, rollback on failure, tax calculated on the server
-- Sales history with search/filters, full-sale return (stock restored, audit + movement records)
-- Dashboard (live stats, 7-day chart), notifications (read/unread), analytics API, CSV export (sales, inventory, purchases; owner only)
+## Backend
+1. `cd server`, then `copy .env.example .env` (Mac/Linux: `cp`), and fill in `.env`.
+2. `npm install`
+3. `npm run seed`  (creates the admin from ADMIN_EMAIL / ADMIN_PASSWORD + fictional demo data)
+4. `npm start`  -> check http://localhost:5000/api/health shows `{"ok":true}`
 
-## Not finished
-- Pages not built yet: Analytics page, Settings page, Profile page (their APIs exist)
-- No medicine edit form, no stock-adjustment form, no discount field in POS
-- No PDF invoice (browser Print only), no partial returns, no demand forecast, no assistant, no barcode camera
-- The UI was only compile-checked: it has NOT been viewed in a browser, so layout, mobile and visual polish are unverified
-- shadcn/ui is not used (Tailwind + Framer Motion + Recharts + Lucide only)
+## Frontend
+1. `cd client`, `npm install`, `npm run dev` -> http://localhost:5173 (calls `/api`, proxied to port 5000)
+2. For production (Vercel): set env var `VITE_API_URL` to your deployed backend URL ending in `/api`, then `npm run build`.
 
-## API (all except login/health need `Authorization: Bearer <token>`; (owner) = admin only)
-auth/login, auth/change-password, me, users (owner), medicines, batches, stock/adjust (owner), suppliers, purchases (owner create), sales, sales/:id, sales/:id/return (owner), sales-search, dashboard, dashboard/trend, analytics, notifications, notifications/read-all, notifications/:id/read, settings (owner edit), export/:sales|inventory|purchases (owner)
+## Production notes
+- Never commit `.env` (already in .gitignore). Set the same variables in your host's dashboard.
+- Set a strong, unique JWT_SECRET. Changing it logs everyone out.
+- Add your frontend URL to `CORS_ORIGINS` if it is not on *.vercel.app.
+- The login endpoint has no rate limiting yet; add one (e.g. express-rate-limit) before public launch.
+
+## Working (tested on PostgreSQL through the API)
+Login/roles, staff create/disable (disabled users lose access immediately), change password, medicines (add/edit/archive/search/barcode), batches + expiry status, stock adjustment, suppliers (add/edit/archive), purchases (transactional), POS sales (server re-checks expiry/stock, discounts owner-only, duplicate-submit protection, rollback), sales search, full-sale return, dashboard, notifications, analytics API, CSV export, settings API.
+
+## Not built yet
+Analytics/Settings/Profile pages, medicine-edit and stock-adjust forms, POS discount field, PDF invoice (browser Print only), partial returns, forecasting, assistant, barcode camera. The UI has not been visually reviewed in a browser.
